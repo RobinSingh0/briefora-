@@ -190,8 +190,19 @@ if not firebase_admin._apps:
         exit(1)
 
     try:
+        # Check if they accidentally used google-services.json
+        with open(SERVICE_ACCOUNT_PATH, 'r') as f:
+            data = json.load(f)
+            if 'project_info' in data and 'type' not in data:
+                print("❌ ERROR: You have used 'google-services.json' instead of a Service Account Key!")
+                print("💡 TIP: Go to Firebase Console > Project Settings > Service Accounts to generate a 'Private Key'.")
+                exit(1)
+
         cred = credentials.Certificate(SERVICE_ACCOUNT_PATH)
         firebase_admin.initialize_app(cred)
+    except json.JSONDecodeError:
+        print("❌ ERROR: The service account file is not a valid JSON.")
+        exit(1)
     except Exception as e:
         print(f"❌ ERROR: Failed to initialize Firebase: {str(e)}")
         print("💡 TIP: Ensure your FIREBASE_SERVICE_ACCOUNT JSON is formatted correctly.")
