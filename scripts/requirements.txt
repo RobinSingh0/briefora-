@@ -6,3 +6,4 @@ python-dotenv
 lxml
 beautifulsoup4
 requests
+nltk

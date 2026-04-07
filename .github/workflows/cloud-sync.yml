@@ -28,9 +28,20 @@ jobs:
         run: pip install -r scripts/requirements.txt
 
       - name: 🔑 Setup Firebase Service Account
-        run: echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" > service-account.json
+        if: always()
+        run: |
+          if [ -z "$FIREBASE_SECRET" ]; then
+            echo "::warning title=Missing Secret::FIREBASE_SERVICE_ACCOUNT is not set. The sync will skip initialization."
+            touch service-account.json
+          else
+            echo "$FIREBASE_SECRET" > service-account.json
+          fi
+        env:
+          FIREBASE_SECRET: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: 🔄 Run Sync Script
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python scripts/newspaper_sync.py
+

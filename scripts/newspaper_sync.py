@@ -179,8 +179,23 @@ RSS_SOURCES['Trending'] = [
 
 # --- Initialize Firebase ---
 if not firebase_admin._apps:
-    cred = credentials.Certificate(SERVICE_ACCOUNT_PATH)
-    firebase_admin.initialize_app(cred)
+    if not os.path.exists(SERVICE_ACCOUNT_PATH):
+        print(f"❌ ERROR: Service account file NOT found at {SERVICE_ACCOUNT_PATH}")
+        print("💡 TIP: Ensure you have added the FIREBASE_SERVICE_ACCOUNT secret in GitHub.")
+        exit(1)
+
+    if os.path.getsize(SERVICE_ACCOUNT_PATH) == 0:
+        print(f"❌ ERROR: Service account file is EMPTY.")
+        print("💡 TIP: Your GitHub secret 'FIREBASE_SERVICE_ACCOUNT' might be blank.")
+        exit(1)
+
+    try:
+        cred = credentials.Certificate(SERVICE_ACCOUNT_PATH)
+        firebase_admin.initialize_app(cred)
+    except Exception as e:
+        print(f"❌ ERROR: Failed to initialize Firebase: {str(e)}")
+        print("💡 TIP: Ensure your FIREBASE_SERVICE_ACCOUNT JSON is formatted correctly.")
+        exit(1)
 
 db = firestore.client()
 
