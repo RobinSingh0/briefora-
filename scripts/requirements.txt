@@ -1,0 +1,8 @@
+newspaper4k
+trafilatura
+feedparser
+firebase-admin
+python-dotenv
+lxml
+beautifulsoup4
+requests

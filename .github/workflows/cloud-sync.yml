@@ -1,0 +1,36 @@
+name: Cloud News Sync
+
+on:
+  schedule:
+    # Runs every 10 minutes
+    - cron: '*/10 * * * *'
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Run Python Sync Cycle
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🏗 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🏗 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: 🔑 Setup Firebase Service Account
+        run: echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" > service-account.json
+
+      - name: 🔄 Run Sync Script
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: service-account.json
+        run: python scripts/newspaper_sync.py

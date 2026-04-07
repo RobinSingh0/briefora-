@@ -1,0 +1,26 @@
+{
+  "short_name": "Briefora",
+  "name": "Briefora - Daily News Briefing",
+  "description": "Your 70-word daily news digest from 70+ global sources.",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#131313",
+  "background_color": "#131313"
+}
