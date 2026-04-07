@@ -120,6 +120,7 @@ export const newsService = {
       }
 
       const snapshot = await getDocs(q);
+      console.log(`Documents found for ${category}: ${snapshot.docs.length}`);
       const newLastVisible = snapshot.docs[snapshot.docs.length - 1] || null;
 
       const articles: NewsItem[] = snapshot.docs.map(docSnap => {

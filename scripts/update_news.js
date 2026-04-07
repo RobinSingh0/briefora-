@@ -110,11 +110,15 @@ async function processCategory(catName, feeds) {
   // Find the exact 1 newest that we don't already have
   for (const item of candidateItems) {
     const dId = articleToDocId(item.link);
-    const existing = await db.collection("news").doc(dId).get();
-    if (!existing.exists) {
-      selectedItem = item;
-      docId = dId;
-      break;
+    try {
+      const existing = await db.collection("news").doc(dId).get();
+      if (!existing.exists) {
+        selectedItem = item;
+        docId = dId;
+        break;
+      }
+    } catch (err) {
+      console.error(`  ❌ [Error] Failed to check existence of doc ${dId}: ${err.message}`);
     }
   }
 
@@ -123,16 +127,19 @@ async function processCategory(catName, feeds) {
     return;
   }
 
-  console.log(`  📝 Summarizing: ${selectedItem.title.slice(0, 50)}...`);
-
   try {
+    console.log(`  🤖 [AI] Summarizing: ${selectedItem.title.slice(0, 50)}...`);
     const summary = await summarizeArticle(
       selectedItem.title, 
       selectedItem.contentSnippet || selectedItem.content || ""
-    );
+    ).catch(err => {
+      console.error(`  ❌ [AI] Summarization failed: ${err.message}`);
+      throw err;
+    });
     
     // 1. ADD (1-in)
     const now = admin.firestore.Timestamp.now();
+    console.log(`  💾 [Firestore] Writing article to 'news/${docId}'...`);
     await db.collection("news").doc(docId).set({
       title: selectedItem.title,
       summary,
@@ -143,25 +150,38 @@ async function processCategory(catName, feeds) {
       timestamp: admin.firestore.Timestamp.fromDate(new Date(selectedItem.pubTime)),
       createdAt: now,
       publishedAt: now 
+    }).catch(err => {
+      console.error(`  ❌ [Firestore] Write failed for 'news/${docId}': ${err.message}`);
+      if (err.code) console.error(`     Error Code: ${err.code}`);
+      throw err;
     });
 
-    console.log(`  ✅ Inserted ${catName} news.`);
+    console.log(`  ✅ [Success] Inserted ${catName} news.`);
 
     // 2. DELETE (1-out)
+    console.log(`  🧹 [Cleanup] Finding oldest article for ${catName} to maintain rotation...`);
     const snapshot = await db.collection("news")
       .where("category", "==", catName)
       .orderBy("publishedAt", "asc")
       .limit(1)
-      .get();
+      .get()
+      .catch(err => {
+        console.error(`  ❌ [Firestore] Cleanup query failed: ${err.message}`);
+        return { empty: true }; // Don't throw just for cleanup
+      });
       
     if (!snapshot.empty) {
-      await snapshot.docs[0].ref.delete();
-      console.log(`  🧹 Deleted oldest article for ${catName}.`);
+      const oldDocId = snapshot.docs[0].id;
+      await snapshot.docs[0].ref.delete().then(() => {
+        console.log(`  🧹 [Success] Deleted oldest article (${oldDocId}) for ${catName}.`);
+      }).catch(err => {
+        console.error(`  ❌ [Firestore] Deletion failed for ${oldDocId}: ${err.message}`);
+      });
     } else {
       console.log(`  ℹ️ No oldest article to delete for ${catName} (collection empty).`);
     }
   } catch (err) {
-    console.error(`  💥 Failed to format/save article in ${catName}: ${err.message}`);
+    console.error(`  💥 [Process Error] Category ${catName} failed: ${err.message}`);
   }
 }
 
