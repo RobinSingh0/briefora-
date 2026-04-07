@@ -27,6 +27,9 @@ jobs:
           eas-cache: true
           token: ${{ secrets.EXPO_TOKEN }}
 
+      - name: 🔑 Setup Google Services (Android)
+        run: echo "${{ secrets.GOOGLE_SERVICES_ANDROID }}" > google-services.json
+
       - name: 📦 Install dependencies
         run: npm install
 
