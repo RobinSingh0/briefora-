@@ -3,7 +3,7 @@ name: Build Release APK
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch: {}
 
 jobs:
@@ -31,7 +31,7 @@ jobs:
         run: echo "${{ secrets.GOOGLE_SERVICES_ANDROID }}" > google-services.json
 
       - name: 📦 Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: 🚀 Build APK
         run: npx eas build --platform android --profile preview --non-interactive
