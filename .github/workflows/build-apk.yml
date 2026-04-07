@@ -24,6 +24,7 @@ jobs:
         uses: expo/expo-github-action@v8
         with:
           expo-version: latest
+          eas-version: latest
           eas-cache: true
           token: ${{ secrets.EXPO_TOKEN }}
 
@@ -36,4 +37,4 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: 🚀 Build APK
-        run: npx eas build --platform android --profile preview --non-interactive
+        run: eas build --platform android --profile preview --non-interactive
