@@ -204,8 +204,9 @@ async function processCategory(catName, feeds) {
 
   for (const f of feeds) {
     try {
-      console.log("Fetching RSS from:", f.url);
+      console.log(`📡 Fetching RSS from: ${f.name} (${f.url})`);
       const feed = await parser.parseURL(f.url);
+      console.log(`✅ Received ${feed.items?.length || 0} items from ${f.name}`);
       if (feed.items && feed.items.length > 0) {
         for (let i = 0; i < Math.min(5, feed.items.length); i++) {
           const item = feed.items[i];
@@ -223,9 +224,10 @@ async function processCategory(catName, feeds) {
   }
   
   candidateItems.sort((a, b) => b.pubTime - a.pubTime);
+  console.log(`📋 Total candidates gathered: ${candidateItems.length}`);
 
   if (candidateItems.length === 0) {
-    console.log(`  ⏩ No articles found for ${catName}.`);
+    console.log(`  ⏩ No articles found for category ${catName} in any feed.`);
     return;
   }
 
@@ -243,27 +245,32 @@ async function processCategory(catName, feeds) {
   }
 
   if (!selectedItem) {
-    console.log(`  😴 No fresh articles discovered in top items for ${catName}.`);
+    console.log(`  😴 All ${candidateItems.length} articles for ${catName} are already in the database. No fresh content found.`);
     return;
   }
 
   try {
     const docId = articleToDocId(selectedItem.link);
+    console.log(`🎯 Found fresh article: "${selectedItem.title.slice(0, 50)}..."`);
+    console.log(`🔗 Link: ${selectedItem.link}`);
+    console.log(`🆔 DocId: ${docId}`);
     
     // Safety Delay before AI call
     console.log(`  💤 [Safety] Short delay for AI...`);
-    await sleep(1000);
+    await sleep(2000);
 
-    console.log(`  🤖 [AI] Summarizing (Gemma 3): ${selectedItem.title.slice(0, 50)}...`);
+    console.log(`  🤖 [AI] Summarizing (Gemini): ${selectedItem.title.slice(0, 50)}...`);
     const summary = await summarizeArticle(
       selectedItem.title, 
       selectedItem.contentSnippet || selectedItem.content || ""
     );
+    console.log(`✨ [AI] Summary successfully generated.`);
     
     const serverTime = admin.firestore.FieldValue.serverTimestamp();
     const batch = db.batch();
     const newDocRef = db.collection("news").doc(docId);
     
+    console.log(`💾 [Firestore] Attempting to write new article to database...`);
     batch.set(newDocRef, {
       title: selectedItem.title,
       summary,
