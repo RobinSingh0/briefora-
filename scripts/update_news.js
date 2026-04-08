@@ -65,7 +65,9 @@ if (!admin.apps.length) {
       const originalError = e;
       // 2. If it fails, maybe it's base64 encoded?
       try {
-        const decoded = Buffer.from(serviceAccountRaw, 'base64').toString('utf8').trim();
+        // Critical: Strip any hidden terminal garbage / non-base64 characters
+        const cleaned = serviceAccountRaw.replace(/[^A-Za-z0-9+/=]/g, '');
+        const decoded = Buffer.from(cleaned, 'base64').toString('utf8').trim();
         serviceAccount = superParse(decoded, "Decoded");
         console.log("🔓 [Auth] Successfully decoded and parsed Base64 service account");
       } catch (e2) {
