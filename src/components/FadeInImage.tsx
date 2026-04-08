@@ -105,11 +105,12 @@ export const FadeInImage: React.FC<FadeInImageProps> = ({
           newsService.updateImageUrl(newsId, newUrl, category || 'WORLD');
         }
       } else {
-        // Continue to next priority immediately if this one failed
+        // Continue to next priority immediately if this one resolved null
+        console.log(`[Waterfall] Priority ${WATERFALL_PRIORITIES[nextIndex]} returned no result. Trying next...`);
         rotateWaterfall();
       }
     } catch (err) {
-      console.warn(`[Waterfall] Error in priority ${WATERFALL_PRIORITIES[nextIndex]}:`, err);
+      console.warn(`[Waterfall] Exception in priority ${WATERFALL_PRIORITIES[nextIndex]}:`, (err as any).message);
       rotateWaterfall();
     }
   }, [waterfallIndex, articleUrl, title, category, newsId]);
@@ -118,9 +119,15 @@ export const FadeInImage: React.FC<FadeInImageProps> = ({
   useEffect(() => {
     // 🛡️ [Instant Fallback] If no URI provided, skip the ORIGINAL step immediately
     if (isLoading && !currentUri && waterfallIndex === 0) {
-      console.log(`[Waterfall] No original image for ${newsId}. Skipping to next priority...`);
-      rotateWaterfall();
-      return;
+      console.log(`[Waterfall] No original image for ${newsId}. Staggering start...`);
+      
+      // Random 0-1500ms initial stagger to spread the parallel component starts
+      const startDelay = Math.floor(Math.random() * 1500);
+      const timer = setTimeout(() => {
+        rotateWaterfall();
+      }, startDelay);
+
+      return () => clearTimeout(timer);
     }
 
     if (isLoading && WATERFALL_PRIORITIES[waterfallIndex] !== 'PLACEHOLDER') {

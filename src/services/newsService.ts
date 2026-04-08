@@ -8,10 +8,7 @@ import he from 'he';
 import { db } from './firebase';
 import { doc, updateDoc, collection, query, where, orderBy, limit, startAfter, getDocs } from 'firebase/firestore';
 
-// Ollama Configuration
-const OLLAMA_ENDPOINT = 'http://localhost:11434/api/generate';
-const OLLAMA_MODEL = 'ministral-3:14b';
-const CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes (Fix 1)
+const CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes
 
 export interface NewsItem {
   id: string;

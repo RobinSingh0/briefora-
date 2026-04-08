@@ -18,7 +18,6 @@ import { NotificationManager } from '../services/notificationManager';
 import { auth, db } from '../services/firebase';
 import { Typography } from '../components/Typography';
 import { Theme } from '../theme/theme';
-import { checkAIHealth } from '../services/ollamaService';
 
 interface SettingsSection {
   title: string;

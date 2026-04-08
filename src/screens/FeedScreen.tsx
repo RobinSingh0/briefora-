@@ -327,10 +327,13 @@ export const FeedScreen: React.FC<{ navigation: any; route?: any; initialCategor
       if (snap.exists()) {
         const metadata = snap.data();
         const syncTime = metadata.last_sync?.toMillis?.() || 0;
+        const lastCategory = metadata.last_category || '';
+        
+        console.log(`[Sync] Metadata change detected. Category: ${lastCategory}, Time: ${new Date(syncTime).toLocaleTimeString()}`);
         
         // 🛡️ [Performance] Only refresh if it's the current category AND the sync is newer than our mount/last fetch
-        if (metadata.last_category?.toUpperCase() === activeCategory.toUpperCase() && syncTime > lastSyncRef.current) {
-          console.log(`[Sync] New data detected for ${activeCategory}. Triggering turbo refresh...`);
+        if (lastCategory.toUpperCase() === activeCategory.toUpperCase() && syncTime > lastSyncRef.current) {
+          console.log(`[Sync] 🚀 New data detected for ACTIVE category ${activeCategory}. Flowing in fresh news...`);
           lastSyncRef.current = syncTime;
           fetchData(true);
         }
