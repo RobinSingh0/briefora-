@@ -24,29 +24,41 @@ if (!admin.apps.length) {
   
   try {
     // ─── Resilient Parsing ───
-    serviceAccountRaw = serviceAccountRaw.trim(); // Critical: Remove any leading/trailing whitespace
+    serviceAccountRaw = serviceAccountRaw.trim();
     let serviceAccount;
     
+    // Helper to parse JSON that might have unescaped control characters (common mangling)
+    const superParse = (str) => {
+      try { return JSON.parse(str); }
+      catch (e) {
+        // Handle literal newlines in the string (bad control characters)
+        const fixed = str.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+        return JSON.parse(fixed);
+      }
+    };
+
     try {
       // 1. Try direct parse
-      serviceAccount = JSON.parse(serviceAccountRaw);
+      serviceAccount = superParse(serviceAccountRaw);
     } catch (e) {
       const originalError = e;
       // 2. If it fails, maybe it's base64 encoded?
       try {
         const decoded = Buffer.from(serviceAccountRaw, 'base64').toString('utf8').trim();
-        serviceAccount = JSON.parse(decoded);
+        serviceAccount = superParse(decoded);
         console.log("🔓 [Auth] Successfully decoded and parsed Base64 service account");
       } catch (e2) {
-        // If it looks like base64 but fails parsing after decode, log THAT error too
-        if (serviceAccountRaw.length > 500 && !serviceAccountRaw.includes('{')) {
-          console.error("❌ [Auth] String looks like Base64 but failed to parse after decoding.");
-          console.error("Decode Error:", e2.message);
-          // Log the first few chars of decoded string (safely)
-          const decodedPreview = Buffer.from(serviceAccountRaw, 'base64').toString('utf8').substring(0, 30);
-          console.error("Decoded Start:", decodedPreview);
+        // Detailed failure logging
+        console.error("❌ [Auth] Parsing failed for both Raw and Base64 paths.");
+        console.error("Original Error:", originalError.message);
+        console.error("Decode/Second Parse Error:", e2.message);
+        
+        // Debugging info
+        console.error("Raw Length:", serviceAccountRaw.length);
+        if (serviceAccountRaw.length > 0) {
+           console.error("Raw Start:", serviceAccountRaw.substring(0, 30) + "...");
         }
-        throw originalError;
+        process.exit(1);
       }
     }
 
@@ -55,11 +67,7 @@ if (!admin.apps.length) {
     });
     console.log("🔐 [Auth] Initialized Firebase Admin successfully");
   } catch (err) {
-    console.error("❌ [Critical] Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY JSON.");
-    console.error("Error Message:", err.message);
-    console.error("Raw String Prefix:", serviceAccountRaw.substring(0, 50) + "...");
-    console.error("Raw String Suffix:", "..." + serviceAccountRaw.substring(serviceAccountRaw.length - 50));
-    console.error("Raw String Length:", serviceAccountRaw.length);
+    console.error("❌ [Critical] Unexpected error during Firebase initialization:", err.message);
     process.exit(1);
   }
 }
