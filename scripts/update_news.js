@@ -229,71 +229,61 @@ async function processCategory(catName, feeds) {
     return;
   }
 
-  const itemsToProcess = candidateItems.slice(0, MAX_PER_RUN);
-  console.log(`  🛒 [Selected] Single-article mode: ${itemsToProcess[0].title.slice(0, 50)}...`);
-
-  let addedCount = 0;
-  const batch = db.batch();
-
-  for (const item of itemsToProcess) {
+  // ─── Find Newest Unseen Article ───
+  let selectedItem = null;
+  for (const item of candidateItems) {
     const docId = articleToDocId(item.link);
-    
-    // Check for duplicates to save AI costs
     const existing = await db.collection("news").doc(docId).get();
-    if (existing.exists) {
+    if (!existing.exists) {
+      selectedItem = item;
+      break; 
+    } else {
       console.log(`  ⏩ [Skip] Already in database: ${item.title.slice(0, 30)}...`);
-      continue;
-    }
-
-    try {
-      // Safety Delay before AI call (Rate Limit respect)
-      console.log(`  💤 [Safety] Short delay for AI...`);
-      await sleep(2000);
-
-      console.log(`  🤖 [AI] Summarizing (Gemma 3): ${item.title.slice(0, 50)}...`);
-      const summary = await summarizeArticle(
-        item.title, 
-        item.contentSnippet || item.content || ""
-      );
-      
-      const serverTime = admin.firestore.FieldValue.serverTimestamp();
-      const newDocRef = db.collection("news").doc(docId);
-      
-      batch.set(newDocRef, {
-        title: item.title,
-        summary,
-        imageUrl: `https://picsum.photos/seed/${docId}/800/1400`,
-        category: catName,
-        sourceUrl: item.link,
-        source: { name: item.sourceName, url: item.sourceUrl },
-        timestamp: admin.firestore.Timestamp.fromDate(new Date(item.pubTime)),
-        createdAt: serverTime,
-        publishedAt: serverTime 
-      });
-
-      addedCount++;
-    } catch (err) {
-      console.error(`  ⚠️ [AI Error] Failed for item: ${item.title.slice(0, 30)} => ${err.message}`);
     }
   }
 
-  if (addedCount === 0) {
-    console.log(`  😴 No new articles to add for ${catName}.`);
+  if (!selectedItem) {
+    console.log(`  😴 No fresh articles discovered in top items for ${catName}.`);
     return;
   }
 
   try {
-    // ─── FIFO Pruning ────────────────────────────────────────────────────────
+    const docId = articleToDocId(selectedItem.link);
+    
+    // Safety Delay before AI call
+    console.log(`  💤 [Safety] Short delay for AI...`);
+    await sleep(1000);
+
+    console.log(`  🤖 [AI] Summarizing (Gemma 3): ${selectedItem.title.slice(0, 50)}...`);
+    const summary = await summarizeArticle(
+      selectedItem.title, 
+      selectedItem.contentSnippet || selectedItem.content || ""
+    );
+    
+    const serverTime = admin.firestore.FieldValue.serverTimestamp();
+    const batch = db.batch();
+    const newDocRef = db.collection("news").doc(docId);
+    
+    batch.set(newDocRef, {
+      title: selectedItem.title,
+      summary,
+      imageUrl: `https://picsum.photos/seed/${docId}/800/1400`,
+      category: catName,
+      sourceUrl: selectedItem.link,
+      source: { name: selectedItem.sourceName, url: selectedItem.sourceUrl },
+      timestamp: admin.firestore.Timestamp.fromDate(new Date(selectedItem.pubTime)),
+      createdAt: serverTime,
+      publishedAt: serverTime 
+    });
+
+    // ─── FIFO Pruning (Inside category) ───
     const categoryDocs = await db.collection("news")
       .where("category", "==", catName)
       .orderBy("timestamp", "desc")
       .get();
     
-    // Total including what's already there (minus what we are about to add/overwrite)
-    // Wait, the batch.set might overwrite existing ones if we didn't check existing, 
-    // but we did check. So total will be current + addedCount.
-    if (categoryDocs.size + addedCount > MAX_HISTORY) {
-      const surplus = (categoryDocs.size + addedCount) - MAX_HISTORY;
+    if (categoryDocs.size + 1 > MAX_HISTORY) {
+      const surplus = (categoryDocs.size + 1) - MAX_HISTORY;
       const toDelete = categoryDocs.docs.slice(categoryDocs.docs.length - surplus);
       toDelete.forEach(doc => batch.delete(doc.ref));
       console.log(`  🗑️ [FIFO] Pruning ${toDelete.length} oldest articles for ${catName}.`);
@@ -301,13 +291,12 @@ async function processCategory(catName, feeds) {
 
     await batch.commit();
 
-    // ─── Firestore Precision Heartbeat ───────────────────────────────────────
-    await updateCategoryMetadata(catName, itemsToProcess[0].title);
-
-    console.log(`  ✅ [Success] Updated ${catName} news (+${addedCount}). Metadata triggered.`);
+    // ─── Firestore Precision Heartbeat ───
+    await updateCategoryMetadata(catName, selectedItem.title);
+    console.log(`  ✅ [Success] Updated ${catName} news with fresh article.`);
 
   } catch (err) {
-    console.error(`  💥 [Process Error] Category ${catName} failed: ${err.message}`);
+    console.error(`  ⚠️ [Error] Failed to process ${selectedItem?.title.slice(0, 30)}: ${err.message}`);
   }
 }
 
