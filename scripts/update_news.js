@@ -24,21 +24,29 @@ if (!admin.apps.length) {
   
   try {
     // ─── Resilient Parsing ───
-    // 1. Try direct parse
+    serviceAccountRaw = serviceAccountRaw.trim(); // Critical: Remove any leading/trailing whitespace
     let serviceAccount;
+    
     try {
+      // 1. Try direct parse
       serviceAccount = JSON.parse(serviceAccountRaw);
     } catch (e) {
-      // 2. If it fails, maybe it's base64 encoded? (Common for robust secrets)
+      const originalError = e;
+      // 2. If it fails, maybe it's base64 encoded?
       try {
-        const decoded = Buffer.from(serviceAccountRaw, 'base64').toString('utf8');
+        const decoded = Buffer.from(serviceAccountRaw, 'base64').toString('utf8').trim();
         serviceAccount = JSON.parse(decoded);
-        console.log("🔓 [Auth] Detected Base64 encoded service account");
+        console.log("🔓 [Auth] Successfully decoded and parsed Base64 service account");
       } catch (e2) {
-        // 3. Last ditch effort: it might be a multiline string from a shell that accidentally 
-        // included literal newlines. Try to replace them, but this is risky.
-        // Actually, just throw the original error for debugging.
-        throw e;
+        // If it looks like base64 but fails parsing after decode, log THAT error too
+        if (serviceAccountRaw.length > 500 && !serviceAccountRaw.includes('{')) {
+          console.error("❌ [Auth] String looks like Base64 but failed to parse after decoding.");
+          console.error("Decode Error:", e2.message);
+          // Log the first few chars of decoded string (safely)
+          const decodedPreview = Buffer.from(serviceAccountRaw, 'base64').toString('utf8').substring(0, 30);
+          console.error("Decoded Start:", decodedPreview);
+        }
+        throw originalError;
       }
     }
 
