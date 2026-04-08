@@ -315,21 +315,53 @@ async function processCategory(catName, feeds) {
 // ─── Execution ───────────────────────────────────────────────────────────────
 async function run() {
   const t0 = Date.now();
-  
-  // Logic: 3-Minute Heartbeat Rotation
-  // Use Unix timestamp to ensure absolute consistency across runs
-  const totalMinutes = Math.floor(Date.now() / (1000 * 60));
-  const categoryIndex = Math.floor(totalMinutes / 3) % CATEGORIES.length;
-  const targetCategory = CATEGORIES[categoryIndex];
+  console.log("🚀 [Briefora] Heartbeat Pulse Started...");
 
-  console.log(`🚀 Starting Pulse Update (3-Minute Heartbeat)`);
-  console.log(`📍 Time: ${new Date().toLocaleTimeString()} | Category Index: ${categoryIndex}`);
-  console.log(`📍 Target Category: ${targetCategory} (Order: ${CATEGORIES.join(' -> ')})`);
+  let selectedCategory = null;
 
-  await processCategory(targetCategory, CATEGORY_FEEDS[targetCategory]);
+  try {
+    // 1. Try to find the "Stale" Category (Oldest last_freshened)
+    console.log("🔍 [Smart-Discovery] Scanning category metadata for stale content...");
+    const metaSnap = await db.collection("_metadata").doc("categories").collection("list").get();
+    
+    if (!metaSnap.empty) {
+      const categoryUsage = metaSnap.docs.map(doc => ({
+        id: doc.id,
+        lastFreshened: doc.data().last_freshened?.toMillis() || 0
+      }));
 
-  const duration = (Date.now() - t0) / 1000;
-  console.log(`\n🏁 Pulse update complete in ${duration.toFixed(2)} seconds.`);
+      // Find the one with the smallest timestamp
+      categoryUsage.sort((a, b) => a.lastFreshened - b.lastFreshened);
+      
+      // We look at the first few candidates to ensure we don't always pick the same failing one
+      // but prioritize the absolute oldest.
+      const oldest = categoryUsage[0];
+      if (oldest && (Date.now() - oldest.lastFreshened > 1000 * 60 * 5)) {
+         selectedCategory = oldest.id.toUpperCase();
+         console.log(`💡 [Smart-Discovery] Neglected category found: ${selectedCategory} (Last updated ${Math.floor((Date.now() - oldest.lastFreshened)/1000/60)}m ago)`);
+      }
+    }
+  } catch (e) {
+    console.warn("⚠️ [Smart-Discovery] Metadata check failed, falling back to time-rotation.", e.message);
+  }
+
+  // 2. Fallback: Rotating Heartbeat Logic (Time-based slot)
+  if (!selectedCategory || !CATEGORIES.includes(selectedCategory)) {
+    const totalMinutes = Math.floor(Date.now() / (1000 * 60));
+    const categoryIndex = Math.floor(totalMinutes / 3) % CATEGORIES.length;
+    selectedCategory = CATEGORIES[categoryIndex];
+    console.log(`🕒 [Rotation] Time-slot selection: ${selectedCategory} (Index ${categoryIndex})`);
+  }
+
+  try {
+    await processCategory(selectedCategory, CATEGORY_FEEDS[selectedCategory]);
+  } catch (err) {
+    console.error(`❌ [Fatal] Run failed:`, err.message);
+    process.exit(1);
+  }
+
+  const duration = ((Date.now() - t0) / 1000).toFixed(1);
+  console.log(`🏁 [Briefora] Pulse Complete. Duration: ${duration}s`);
   process.exit(0);
 }
 
