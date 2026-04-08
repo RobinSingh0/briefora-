@@ -28,24 +28,45 @@ if (!admin.apps.length) {
     let serviceAccount;
     
     // Helper to parse JSON that might have unescaped control characters (common mangling)
-    const superParse = (str) => {
+    const superParse = (str, label) => {
       try { return JSON.parse(str); }
       catch (e) {
-        // Handle literal newlines in the string (bad control characters)
-        const fixed = str.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-        return JSON.parse(fixed);
+        // Extract position from error message "at position 1850"
+        const posMatch = e.message.match(/position (\d+)/);
+        if (posMatch) {
+          const pos = parseInt(posMatch[1], 10);
+          console.error(`📍 [${label}] Error at position ${pos}. Context:`);
+          console.error(`"..." ${JSON.stringify(str.substring(Math.max(0, pos - 20), pos + 20))} "..."`);
+          // Specifically check for control chars at that position
+          const code = str.charCodeAt(pos);
+          console.error(`Character code at ${pos}: ${code} (0x${code.toString(16)})`);
+        }
+        
+        // Final attempt: aggressive escaping of all control codes except space/tabs/newlines between tokens
+        // But for private keys, it's usually just literal newlines that break it.
+        try {
+          const fixed = str.replace(/[^\x20-\x7E]/g, (c) => {
+            if (c === '\n') return '\\n';
+            if (c === '\r') return '\\r';
+            if (c === '\t') return '\\t';
+            return c;
+          });
+          return JSON.parse(fixed);
+        } catch (eFinal) {
+          throw e; // Throw original error to avoid confusing 'fixed' errors
+        }
       }
     };
 
     try {
       // 1. Try direct parse
-      serviceAccount = superParse(serviceAccountRaw);
+      serviceAccount = superParse(serviceAccountRaw, "Raw");
     } catch (e) {
       const originalError = e;
       // 2. If it fails, maybe it's base64 encoded?
       try {
         const decoded = Buffer.from(serviceAccountRaw, 'base64').toString('utf8').trim();
-        serviceAccount = superParse(decoded);
+        serviceAccount = superParse(decoded, "Decoded");
         console.log("🔓 [Auth] Successfully decoded and parsed Base64 service account");
       } catch (e2) {
         // Detailed failure logging
