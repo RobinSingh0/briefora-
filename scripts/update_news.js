@@ -10,7 +10,15 @@ const parser = new RSSParser({
   timeout: 10000,
   headers: {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    'Accept': 'application/rss+xml, application/xml;q=0.9, */*;q=0.8'
+    'Accept': 'application/rss+xml, application/xml;q=0.9, image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1'
   },
 });
 
@@ -103,13 +111,13 @@ const CATEGORY_FEEDS = {
   'BREAKING': [
     {'name': 'Google News Top', 'url': 'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en'}
   ],
-  'WORLD': [
-    {'name': 'Reuters World', 'url': 'https://news.google.com/rss/search?q=when:24h+allinurl:reuters.com&hl=en-US&gl=US&ceid=US:en'},
-    {'name': 'BBC World', 'url': 'http://feeds.bbci.co.uk/news/world/rss.xml'}
-  ],
   'INDIA': [
     {'name': 'Times of India', 'url': 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms'},
     {'name': 'The Hindu', 'url': 'https://www.thehindu.com/news/national/feeder/default.rss'}
+  ],
+  'WORLD': [
+    {'name': 'Reuters World', 'url': 'https://news.google.com/rss/search?q=when:24h+allinurl:reuters.com&hl=en-US&gl=US&ceid=US:en'},
+    {'name': 'BBC World', 'url': 'http://feeds.bbci.co.uk/news/world/rss.xml'}
   ],
   'TECH': [
     {'name': 'TechCrunch', 'url': 'https://techcrunch.com/feed/'},
@@ -145,6 +153,12 @@ const CATEGORY_FEEDS = {
   ]
 };
 
+// Explicit order for the 12-category rotation
+const CATEGORIES = [
+  'BREAKING', 'INDIA', 'WORLD', 'TECH', 'AI', 'BUSINESS', 
+  'SCIENCE', 'SPORTS', 'ENTERTAINMENT', 'GAMING', 'PROGRAMMING', 'EDUCATION'
+];
+
 function normalizeUrl(url) {
   try {
     let u = url.toLowerCase().trim();
@@ -167,17 +181,17 @@ const MAX_PER_RUN = 1;
 
 // ─── Firestore Category Precision ──────────────────────────────────────────
 async function updateCategoryMetadata(catName, articleTitle) {
-  const now = admin.firestore.Timestamp.now();
+  const serverTime = admin.firestore.FieldValue.serverTimestamp();
   
   // 1. Update Category-Specific Heartbeat
   await db.collection("_metadata").doc("categories").collection("list").doc(catName.toUpperCase()).set({
-    last_freshened: now,
+    last_freshened: serverTime,
     last_article_title: articleTitle
   }, { merge: true });
 
   // 2. Update Global sync_status (legacy compatibility for Flutter app)
   await db.collection("_metadata").doc("sync_status").set({
-    last_sync: now,
+    last_sync: serverTime,
     last_category: catName,
     last_title: articleTitle
   }, { merge: true });
@@ -236,13 +250,13 @@ async function processCategory(catName, feeds) {
       console.log(`  💤 [Safety] Short delay for AI...`);
       await sleep(2000);
 
-      console.log(`  🤖 [AI] Summarizing: ${item.title.slice(0, 50)}...`);
+      console.log(`  🤖 [AI] Summarizing (Gemma 3): ${item.title.slice(0, 50)}...`);
       const summary = await summarizeArticle(
         item.title, 
         item.contentSnippet || item.content || ""
       );
       
-      const now = admin.firestore.Timestamp.now();
+      const serverTime = admin.firestore.FieldValue.serverTimestamp();
       const newDocRef = db.collection("news").doc(docId);
       
       batch.set(newDocRef, {
@@ -253,8 +267,8 @@ async function processCategory(catName, feeds) {
         sourceUrl: item.link,
         source: { name: item.sourceName, url: item.sourceUrl },
         timestamp: admin.firestore.Timestamp.fromDate(new Date(item.pubTime)),
-        createdAt: now,
-        publishedAt: now 
+        createdAt: serverTime,
+        publishedAt: serverTime 
       });
 
       addedCount++;
@@ -299,23 +313,17 @@ async function processCategory(catName, feeds) {
 
 // ─── Execution ───────────────────────────────────────────────────────────────
 async function run() {
-  console.log(`💤 [Warm-up] Initiating 2-second anti-bot delay...`);
-  await sleep(2000);
-
   const t0 = Date.now();
   
-  // Logic: Robust minute-based rotation (0-59 minutes / 3 = 0-19 buckets)
-  const minutes = new Date().getMinutes();
-  const allCategoryNames = Object.keys(CATEGORY_FEEDS).sort();
-  
-  // Calculate index: 0-19 modulo category count (12)
-  const targetIndex = Math.floor(minutes / 3) % allCategoryNames.length;
-  const targetCategory = allCategoryNames[targetIndex];
+  // Logic: 3-Minute Heartbeat Rotation
+  // Use Unix timestamp to ensure absolute consistency across runs
+  const totalMinutes = Math.floor(Date.now() / (1000 * 60));
+  const categoryIndex = Math.floor(totalMinutes / 3) % CATEGORIES.length;
+  const targetCategory = CATEGORIES[categoryIndex];
 
-  console.log("Selected Category Index:", targetIndex);
-  console.log(`🚀 Starting Pulse Update (Minute-Based Rotation)`);
-  console.log(`📍 Time: ${new Date().toLocaleTimeString()} | Minute: ${minutes}`);
-  console.log(`📍 Target Category: ${targetCategory} (Index: ${targetIndex} of ${allCategoryNames.length})`);
+  console.log(`🚀 Starting Pulse Update (3-Minute Heartbeat)`);
+  console.log(`📍 Time: ${new Date().toLocaleTimeString()} | Category Index: ${categoryIndex}`);
+  console.log(`📍 Target Category: ${targetCategory} (Order: ${CATEGORIES.join(' -> ')})`);
 
   await processCategory(targetCategory, CATEGORY_FEEDS[targetCategory]);
 

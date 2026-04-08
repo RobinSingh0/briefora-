@@ -37,7 +37,7 @@ async function summarizeWithGemini(title, body) {
   console.log("AI Model Input:", title);
 
   const model = genAI.getGenerativeModel({ 
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemma-3-27b-it",
     generationConfig: {
       temperature: 0.1,
       topP: 0.8,
@@ -51,15 +51,7 @@ async function summarizeWithGemini(title, body) {
     ]
   });
   
-  const prompt = `System: You are an elite news editor. You provide extremely concise, factual summaries.
-Task: Summarize the article below into EXACTLY 3 bullet points.
-Rules:
-- Use a simple dash (-) for each bullet point.
-- Ensure each bullet is a single line.
-- NO introductory text.
-- NO conclusion text.
-- NO boilerplate (e.g., "Here is a summary").
-- Start directly with "- Point 1".
+  const prompt = `You are a news bot. Summarize the following news into exactly 3 concise bullet points. Start each bullet with a '•'. Do not write an intro. Do not write an outro. Just the 3 facts.
 
 Title: ${title}
 Body: ${body}`;
