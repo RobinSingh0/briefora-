@@ -34,53 +34,61 @@ async function summarizeArticle(title, body) {
 async function summarizeWithGemini(title, body) {
   if (!genAI) throw new Error('GEMINI_API_KEY missing.');
 
-  console.log("AI Model Input:", title);
+  const modelOptions = ["gemma-3-27b-it", "gemini-1.5-flash"];
+  let lastError;
 
-  const model = genAI.getGenerativeModel({ 
-    model: "gemma-3-27b-it",
-    generationConfig: {
-      temperature: 0.1,
-      topP: 0.8,
-      topK: 40,
-    },
-    safetySettings: [
-      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-    ]
-  });
-  
-  const prompt = `You are a news bot. Summarize the following news into exactly 3 concise bullet points. Start each bullet with a '•'. Do not write an intro. Do not write an outro. Just the 3 facts.
+  for (const modelId of modelOptions) {
+    try {
+      console.log(`🤖 [AI] Attempting with model: ${modelId}`);
+      const model = genAI.getGenerativeModel({ 
+        model: modelId,
+        generationConfig: {
+          temperature: 0.1,
+          topP: 0.8,
+          topK: 40,
+        },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        ]
+      });
+      
+      const prompt = `You are a news bot. Summarize the following news into exactly 3 concise bullet points. Start each bullet with a '•'. Do not write an intro. Do not write an outro. Just the 3 facts.
 
 Title: ${title}
 Body: ${body}`;
 
-  const result = await model.generateContent(prompt);
-  const response = await result.response;
-  let text = response.text().trim();
-  
-  console.log("AI Response:", text);
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      let text = response.text().trim();
+      
+      console.log(`✨ [AI] Success using ${modelId}`);
 
-  // ─── Post-Processing: Enforce 3 Clean Bullets ────────────────────────────
-  // Split by common bullet markers and filter empty
-  let points = text.split(/\n\s*[-*•]\s*/).filter(p => p.trim().length > 5);
-  
-  // If the first point was missed by split (no leading bullet), handle it
-  if (points.length < 3 && !text.startsWith('-') && !text.startsWith('*')) {
-     const initialLines = text.split('\n').filter(l => l.trim().length > 5);
-     if (initialLines.length >= 3) points = initialLines;
+      // ─── Post-Processing: Enforce 3 Clean Bullets ───
+      let points = text.split(/\n\s*[-*•]\s*/).filter(p => p.trim().length > 5);
+      
+      if (points.length < 3 && !text.startsWith('-') && !text.startsWith('*')) {
+         const initialLines = text.split('\n').filter(l => l.trim().length > 5);
+         if (initialLines.length >= 3) points = initialLines;
+      }
+
+      points = points.slice(0, 3).map(p => p.replace(/^[-*•]\s*/, '').trim());
+      
+      if (points.length < 3) {
+        return points.length > 0 ? points.map(p => `• ${p}`).join('\n') : text.slice(0, 300);
+      }
+
+      return points.map(p => `• ${p}`).join('\n');
+    } catch (err) {
+      console.warn(`⚠️ [AI] Model ${modelId} failed: ${err.message}`);
+      lastError = err;
+      continue; // Try next model
+    }
   }
 
-  // Final normalization to exactly 3 points
-  points = points.slice(0, 3).map(p => p.replace(/^[-*•]\s*/, '').trim());
-  
-  if (points.length < 3) {
-    console.warn(`⚠️ [AI] Generated only ${points.length} points. Returning concatenated lines.`);
-    return points.length > 0 ? points.map(p => `• ${p}`).join('\n') : text.slice(0, 300);
-  }
-
-  return points.map(p => `• ${p}`).join('\n');
+  throw lastError || new Error('All models failed');
 }
 
 module.exports = { summarizeArticle };

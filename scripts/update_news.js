@@ -193,7 +193,8 @@ async function updateCategoryMetadata(catName, articleTitle) {
   await db.collection("_metadata").doc("sync_status").set({
     last_sync: serverTime,
     last_category: catName,
-    last_title: articleTitle
+    last_title: articleTitle,
+    global_force_refresh: Date.now() // Flag for app to refresh Breaking tab
   }, { merge: true });
 }
 
@@ -208,7 +209,8 @@ async function processCategory(catName, feeds) {
       const feed = await parser.parseURL(f.url);
       console.log(`✅ Received ${feed.items?.length || 0} items from ${f.name}`);
       if (feed.items && feed.items.length > 0) {
-        for (let i = 0; i < Math.min(5, feed.items.length); i++) {
+        // Increase scan depth to top 10 articles to find unseen ones
+        for (let i = 0; i < Math.min(10, feed.items.length); i++) {
           const item = feed.items[i];
           candidateItems.push({
             ...item,
@@ -278,7 +280,10 @@ async function processCategory(catName, feeds) {
       category: catName,
       sourceUrl: selectedItem.link,
       source: { name: selectedItem.sourceName, url: selectedItem.sourceUrl },
-      timestamp: admin.firestore.Timestamp.fromDate(new Date(selectedItem.pubTime)),
+      // 🚀 CRITICAL: We use serverTime for 'timestamp' to force it to the top of the feed.
+      // We store the original RSS pubTime separately for history/metadata.
+      timestamp: serverTime, 
+      originalPubDate: admin.firestore.Timestamp.fromDate(new Date(selectedItem.pubTime)),
       createdAt: serverTime,
       publishedAt: serverTime 
     });
