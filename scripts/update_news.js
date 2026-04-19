@@ -20,14 +20,27 @@ const parser = new RSSParser({
     'Sec-Fetch-User': '?1',
     'Upgrade-Insecure-Requests': '1'
   },
+  // Extract media fields so we can get real article images
+  customFields: {
+    item: [
+      ['media:content', 'media:content'],
+      ['media:thumbnail', 'media:thumbnail'],
+      ['media:group', 'media:group'],
+    ]
+  }
 });
+
 
 // ─── Firebase Auth Initialization ───────────────────────────────────────────
 if (!admin.apps.length) {
   let serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (!serviceAccountRaw) {
-    console.error("❌ [Critical] Missing FIREBASE_SERVICE_ACCOUNT_KEY env variable.");
-    process.exit(1);
+    console.warn("⚠️ [Warning] FIREBASE_SERVICE_ACCOUNT_KEY is missing. Attempting to use default credentials...");
+    // If we have a project ID, maybe we can use ADC
+    if (!process.env.FIREBASE_PROJECT_ID) {
+        console.error("❌ [Critical] Both FIREBASE_SERVICE_ACCOUNT_KEY and FIREBASE_PROJECT_ID are missing. Cannot continue.");
+        process.exit(1);
+    }
   }
   
   try {
@@ -111,10 +124,7 @@ const CATEGORY_FEEDS = {
   'BREAKING': [
     {'name': 'Google News Top', 'url': 'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en'}
   ],
-  'INDIA': [
-    {'name': 'Times of India', 'url': 'https://timesofindia.indiatimes.com/rssfeedstopstories.cms'},
-    {'name': 'The Hindu', 'url': 'https://www.thehindu.com/news/national/feeder/default.rss'}
-  ],
+
   'WORLD': [
     {'name': 'Reuters World', 'url': 'https://news.google.com/rss/search?q=when:24h+allinurl:reuters.com&hl=en-US&gl=US&ceid=US:en'},
     {'name': 'BBC World', 'url': 'http://feeds.bbci.co.uk/news/world/rss.xml'}
@@ -150,13 +160,27 @@ const CATEGORY_FEEDS = {
   ],
   'EDUCATION': [
     {'name': 'Open Culture', 'url': 'https://www.openculture.com/feed'}
+  ],
+  'LIFESTYLE': [
+    { name: 'Fit Foodie Finds', url: 'https://fitfoodiefinds.com/feed/' },
+    { name: 'MyFitnessPal', url: 'https://blog.myfitnesspal.com/feed/' },
+    { name: 'Tiny Buddha', url: 'https://tinybuddha.com/feed/' },
+    { name: 'Eat This, Not That', url: 'https://www.eatthis.com/feed/' },
+    { name: 'Patient.info', url: 'https://patient.info/rss' }
+  ],
+  'ENVIRONMENT': [
+    { name: 'Guardian Environment', url: 'https://www.theguardian.com/uk/environment/rss' },
+    { name: 'Inside Climate News', url: 'https://insideclimatenews.org/feed/' },
+    { name: 'Carbon Brief', url: 'https://www.carbonbrief.org/feed/' },
+    { name: 'Mongabay', url: 'https://news.mongabay.com/feed/' }
   ]
 };
 
 // Explicit order for the 12-category rotation
 const CATEGORIES = [
-  'BREAKING', 'INDIA', 'WORLD', 'TECH', 'AI', 'BUSINESS', 
-  'SCIENCE', 'SPORTS', 'ENTERTAINMENT', 'GAMING', 'PROGRAMMING', 'EDUCATION'
+  'BREAKING', 'WORLD', 'TECH', 'AI', 'BUSINESS', 
+  'SCIENCE', 'SPORTS', 'ENTERTAINMENT', 'GAMING', 'PROGRAMMING', 'EDUCATION',
+  'LIFESTYLE', 'ENVIRONMENT'
 ];
 
 function normalizeUrl(url) {
@@ -177,7 +201,28 @@ function articleToDocId(url) {
 }
 
 const MAX_HISTORY = 20;
-const MAX_PER_RUN = 1;
+const MAX_PER_RUN = 3; // Process up to 3 fresh articles per run
+
+// Extract the best available image URL from an RSS item
+function extractImageUrl(item, fallbackSeed) {
+  // 1. RSS enclosure (most common for news feeds)
+  if (item.enclosure && item.enclosure.url && /\.(jpe?g|png|webp|gif)/i.test(item.enclosure.url)) {
+    return item.enclosure.url;
+  }
+  // 2. media:content
+  const mediaContent = item['media:content'];
+  if (mediaContent && mediaContent.$ && mediaContent.$.url) return mediaContent.$.url;
+  // 3. media:thumbnail
+  const mediaThumbnail = item['media:thumbnail'];
+  if (mediaThumbnail && mediaThumbnail.$ && mediaThumbnail.$.url) return mediaThumbnail.$.url;
+  if (typeof mediaThumbnail === 'string' && mediaThumbnail.startsWith('http')) return mediaThumbnail;
+  // 4. Grab first <img> from HTML content
+  const htmlContent = item.content || item.summary || item['content:encoded'] || '';
+  const imgMatch = htmlContent.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (imgMatch && imgMatch[1] && imgMatch[1].startsWith('http')) return imgMatch[1];
+  // 5. Fallback to Picsum placeholder
+  return `https://picsum.photos/seed/${fallbackSeed}/800/1400`;
+}
 
 // ─── Firestore Category Precision ──────────────────────────────────────────
 async function updateCategoryMetadata(catName, articleTitle) {
@@ -192,7 +237,7 @@ async function updateCategoryMetadata(catName, articleTitle) {
   // 2. Update Global sync_status (legacy compatibility for Flutter app)
   await db.collection("_metadata").doc("sync_status").set({
     last_sync: serverTime,
-    last_category: catName,
+    last_category: catName.toLowerCase(),
     last_title: articleTitle,
     global_force_refresh: Date.now() // Flag for app to refresh Breaking tab
   }, { merge: true });
@@ -233,82 +278,88 @@ async function processCategory(catName, feeds) {
     return;
   }
 
-  // ─── Find Newest Unseen Article ───
-  let selectedItem = null;
+  // ─── Find & Process Up To MAX_PER_RUN Unseen Articles ───
+  const catLower = catName.toLowerCase();
+  let processedCount = 0;
+
   for (const item of candidateItems) {
+    if (processedCount >= MAX_PER_RUN) break;
+
     const docId = articleToDocId(item.link);
     const existing = await db.collection("news").doc(docId).get();
-    if (!existing.exists) {
-      selectedItem = item;
-      break; 
-    } else {
-      console.log(`  ⏩ [Skip] Already in database: ${item.title.slice(0, 30)}...`);
+    if (existing.exists) {
+      console.log(`  ⏩ [Skip] Already in database: ${item.title.slice(0, 40)}...`);
+      continue;
     }
-  }
 
-  if (!selectedItem) {
-    console.log(`  😴 All ${candidateItems.length} articles for ${catName} are already in the database. No fresh content found.`);
-    return;
-  }
-
-  try {
-    const docId = articleToDocId(selectedItem.link);
-    console.log(`🎯 Found fresh article: "${selectedItem.title.slice(0, 50)}..."`);
-    console.log(`🔗 Link: ${selectedItem.link}`);
+    console.log(`\n🎯 [${processedCount + 1}/${MAX_PER_RUN}] Fresh article: "${item.title.slice(0, 50)}..."`);
+    console.log(`🔗 Link: ${item.link}`);
     console.log(`🆔 DocId: ${docId}`);
-    
-    // Safety Delay before AI call
-    console.log(`  💤 [Safety] Short delay for AI...`);
-    await sleep(2000);
 
-    console.log(`  🤖 [AI] Summarizing (Gemini): ${selectedItem.title.slice(0, 50)}...`);
-    const summary = await summarizeArticle(
-      selectedItem.title, 
-      selectedItem.contentSnippet || selectedItem.content || ""
-    );
-    console.log(`✨ [AI] Summary successfully generated.`);
-    
-    const serverTime = admin.firestore.FieldValue.serverTimestamp();
-    const batch = db.batch();
-    const newDocRef = db.collection("news").doc(docId);
-    
-    console.log(`💾 [Firestore] Attempting to write new article to database...`);
-    batch.set(newDocRef, {
-      title: selectedItem.title,
-      summary,
-      imageUrl: `https://picsum.photos/seed/${docId}/800/1400`,
-      category: catName,
-      sourceUrl: selectedItem.link,
-      source: { name: selectedItem.sourceName, url: selectedItem.sourceUrl },
-      // 🚀 CRITICAL: We use serverTime for 'timestamp' to force it to the top of the feed.
-      // We store the original RSS pubTime separately for history/metadata.
-      timestamp: serverTime, 
-      originalPubDate: admin.firestore.Timestamp.fromDate(new Date(selectedItem.pubTime)),
-      createdAt: serverTime,
-      publishedAt: serverTime 
-    });
+    try {
+      // Safety delay before AI call
+      await sleep(2000);
 
-    // ─── FIFO Pruning (Inside category) ───
-    const categoryDocs = await db.collection("news")
-      .where("category", "==", catName)
-      .orderBy("timestamp", "desc")
-      .get();
-    
-    if (categoryDocs.size + 1 > MAX_HISTORY) {
-      const surplus = (categoryDocs.size + 1) - MAX_HISTORY;
-      const toDelete = categoryDocs.docs.slice(categoryDocs.docs.length - surplus);
-      toDelete.forEach(doc => batch.delete(doc.ref));
-      console.log(`  🗑️ [FIFO] Pruning ${toDelete.length} oldest articles for ${catName}.`);
+      console.log(`  🤖 [AI] Summarizing (Gemini): ${item.title.slice(0, 50)}...`);
+      const aiResult = await summarizeArticle(
+        item.title,
+        item.contentSnippet || item.content || ""
+      );
+      console.log(`✨ [AI] Summary generated (${aiResult.summary.length} chars).`);
+
+      const serverTime = admin.firestore.FieldValue.serverTimestamp();
+      const batch = db.batch();
+      const newDocRef = db.collection("news").doc(docId);
+
+      // Extract the best image URL available from the RSS item
+      const imageUrl = extractImageUrl(item, docId);
+      console.log(`🖼️  [Image] ${imageUrl.slice(0, 80)}`);
+
+      console.log(`💾 [Firestore] Writing article to database...`);
+      batch.set(newDocRef, {
+        title: item.title,
+        summary: aiResult.summary,
+        imageUrl: imageUrl,
+        category: catLower,
+        sourceUrl: item.link,
+        source: { name: item.sourceName, url: item.sourceUrl },
+        // Use server timestamp as 'timestamp' so new articles always sort to the top
+        timestamp: serverTime,
+        originalPubDate: admin.firestore.Timestamp.fromDate(new Date(item.pubTime)),
+        createdAt: serverTime,
+        publishedAt: serverTime
+      });
+
+      // ─── FIFO Pruning (maintain max per category) ───
+      const categoryDocs = await db.collection("news")
+        .where("category", "==", catLower)
+        .orderBy("timestamp", "desc")
+        .get();
+
+      if (categoryDocs.size + 1 > MAX_HISTORY) {
+        const surplus = (categoryDocs.size + 1) - MAX_HISTORY;
+        const toDelete = categoryDocs.docs.slice(categoryDocs.docs.length - surplus);
+        toDelete.forEach(doc => batch.delete(doc.ref));
+        console.log(`  🗑️ [FIFO] Pruning ${toDelete.length} oldest articles for ${catLower}.`);
+      }
+
+      await batch.commit();
+
+      // ─── Heartbeat ───
+      await updateCategoryMetadata(catLower, item.title);
+      console.log(`  ✅ [Success] Saved article ${processedCount + 1} for ${catLower}.`);
+      processedCount++;
+
+    } catch (err) {
+      console.error(`  ⚠️ [Error] Failed to process "${item.title.slice(0, 40)}": ${err.message}`);
+      // Continue to next article rather than aborting the whole category
     }
+  }
 
-    await batch.commit();
-
-    // ─── Firestore Precision Heartbeat ───
-    await updateCategoryMetadata(catName, selectedItem.title);
-    console.log(`  ✅ [Success] Updated ${catName} news with fresh article.`);
-
-  } catch (err) {
-    console.error(`  ⚠️ [Error] Failed to process ${selectedItem?.title.slice(0, 30)}: ${err.message}`);
+  if (processedCount === 0) {
+    console.log(`  😴 No new articles saved for ${catName} (all ${candidateItems.length} candidates were already in DB).`);
+  } else {
+    console.log(`  🏆 [Done] Saved ${processedCount} new article(s) for ${catName}.`);
   }
 }
 
